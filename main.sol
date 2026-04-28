@@ -425,3 +425,64 @@ contract CoinCollectSSS {
         )
     {
         Season memory s = seasonOf[seasonId];
+        return (s.active, s.finalized, s.startAt, s.endAt, s.finalizedAt, s.entryFeeWei, s.potWei, s.resultTag);
+    }
+
+    function enterSeason() external payable whenNotPaused nonReentrant {
+        uint32 sid = currentSeasonId;
+        Season storage s = seasonOf[sid];
+        if (!s.active) revert CCS_SeasonInactive();
+        if (uint64(block.timestamp) < s.startAt || uint64(block.timestamp) > s.endAt) revert CCS_SeasonInactive();
+        if (!isRegistered(msg.sender)) revert CCS_NotRegistered();
+
+        if (msg.value != s.entryFeeWei) revert CCS_FeeMismatch();
+        s.potWei += msg.value;
+        playerOf[msg.sender].lastSeasonPlayed = sid;
+        emit CCS_Entry(msg.sender, sid, msg.value, uint64(block.timestamp));
+    }
+
+    // =============================================================
+    //                          COIN BALANCES
+    // =============================================================
+
+    function coinBalance(uint32 seasonId, address player, uint16 coinType) external view returns (uint96) {
+        return _coinBal[seasonId][player][coinType];
+    }
+
+    function coinBalancesBatch(uint32 seasonId, address player, uint16[] calldata coinTypes)
+        external
+        view
+        returns (uint96[] memory out)
+    {
+        uint256 n = coinTypes.length;
+        if (n == 0 || n > 128) revert CCS_TooMany();
+        out = new uint96[](n);
+        for (uint256 i = 0; i < n; i++) {
+            out[i] = _coinBal[seasonId][player][coinTypes[i]];
+        }
+    }
+
+    // =============================================================
+    //                        SIGNED AI DROP CLAIMS
+    // =============================================================
+
+    struct DropClaim {
+        uint32 seasonId;
+        uint16 coinType;
+        uint96 amount;
+        uint64 deadline;
+        bytes32 dropId;
+        uint256 nonce;
+        bytes signature;
+    }
+
+    function claimDrops(DropClaim[] calldata claims) external payable whenNotPaused nonReentrant {
+        uint256 n = claims.length;
+        if (n == 0 || n > maxDropsPerTx) revert CCS_TooMany();
+        if (!isRegistered(msg.sender)) revert CCS_NotRegistered();
+
+        uint32 sid = currentSeasonId;
+        Season storage s = seasonOf[sid];
+        if (!s.active) revert CCS_SeasonInactive();
+        if (uint64(block.timestamp) < s.startAt || uint64(block.timestamp) > s.endAt) revert CCS_SeasonInactive();
+
