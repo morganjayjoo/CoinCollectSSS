@@ -669,3 +669,64 @@ contract CoinCollectSSS {
         }
         return r;
     }
+
+    // =============================================================
+    //                         PRIZE / WITHDRAWALS
+    // =============================================================
+
+    function accruePrize(address player, uint32 seasonId, uint256 amountWei) external onlyRole(ROLE_TREASURER) nonReentrant {
+        if (player == address(0) || amountWei == 0) revert CCS_BadInput();
+        Season storage s = seasonOf[seasonId];
+        if (!s.finalized) revert CCS_PotLocked();
+        if (s.potWei < amountWei) revert CCS_InsufficientBalance();
+        s.potWei -= amountWei;
+        pendingWithdrawals[player] += amountWei;
+        emit CCS_PrizeAccrued(player, seasonId, amountWei, uint64(block.timestamp));
+    }
+
+    function fundPrizePot(uint32 seasonId) external payable onlyRole(ROLE_TREASURER) nonReentrant {
+        if (msg.value == 0) revert CCS_BadInput();
+        Season storage s = seasonOf[seasonId];
+        // allow funding any season pot; to avoid confusion, require season exists.
+        if (s.startAt == 0) revert CCS_BadInput();
+        s.potWei += msg.value;
+        emit CCS_Entry(msg.sender, seasonId, msg.value, uint64(block.timestamp));
+    }
+
+    function withdraw() external nonReentrant {
+        uint256 amt = pendingWithdrawals[msg.sender];
+        if (amt == 0) revert CCS_InsufficientBalance();
+        pendingWithdrawals[msg.sender] = 0;
+        (bool ok,) = msg.sender.call{value: amt}("");
+        if (!ok) revert CCS_TransferFailed();
+        emit CCS_Withdrawn(msg.sender, amt, uint64(block.timestamp));
+    }
+
+    // =============================================================
+    //                           VIEW HELPERS
+    // =============================================================
+
+    function playerSummary(uint32 seasonId, address player)
+        external
+        view
+        returns (
+            bool registered,
+            bytes32 handleHash,
+            uint64 registeredAt,
+            uint256 score,
+            uint16 streak,
+            uint64 lastClaimAt,
+            uint256 withdrawableWei
+        )
+    {
+        PlayerProfile memory p = playerOf[player];
+        registered = p.registeredAt != 0;
+        handleHash = p.handleHash;
+        registeredAt = p.registeredAt;
+        score = scoreOf[seasonId][player];
+        streak = streakOf[seasonId][player];
+        lastClaimAt = lastClaimAtOf[seasonId][player];
+        withdrawableWei = pendingWithdrawals[player];
+    }
+
+    // =============================================================
