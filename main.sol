@@ -242,3 +242,64 @@ contract CoinCollectSSS {
 
         emit CCS_SettingsUpdated(keccak256("maxCoinTypeId"), maxCoinTypeId, uint64(block.timestamp));
         emit CCS_SettingsUpdated(keccak256("maxDropsPerTx"), maxDropsPerTx, uint64(block.timestamp));
+        emit CCS_SettingsUpdated(keccak256("craftFeeBps"), craftFeeBps, uint64(block.timestamp));
+        emit CCS_SettingsUpdated(keccak256("streakWindowSeconds"), streakWindowSeconds, uint64(block.timestamp));
+        emit CCS_SettingsUpdated(keccak256("streakBonusPerStep"), streakBonusPerStep, uint64(block.timestamp));
+        emit CCS_SettingsUpdated(keccak256("maxStreakBonus"), maxStreakBonus, uint64(block.timestamp));
+        emit CCS_SettingsUpdated(keccak256("operatorTipWei"), operatorTipWei, uint64(block.timestamp));
+    }
+
+    receive() external payable {
+        // Only accept ETH through explicit entry or prize funding routes.
+        revert CCS_BadInput();
+    }
+
+    fallback() external payable {
+        revert CCS_BadInput();
+    }
+
+    // =============================================================
+    //                           ROLE LOGIC
+    // =============================================================
+
+    modifier onlyRole(bytes32 role) {
+        if (!_hasRole[role][msg.sender]) revert CCS_Unauthorized();
+        _;
+    }
+
+    function hasRole(bytes32 role, address account) external view returns (bool) {
+        return _hasRole[role][account];
+    }
+
+    function grantRole(bytes32 role, address account) external onlyRole(ROLE_ADMIN) {
+        if (account == address(0)) revert CCS_BadInput();
+        _grantRole(role, account);
+    }
+
+    function revokeRole(bytes32 role, address account) external onlyRole(ROLE_ADMIN) {
+        if (account == address(0)) revert CCS_BadInput();
+        _revokeRole(role, account);
+    }
+
+    function _grantRole(bytes32 role, address account) internal {
+        if (!_hasRole[role][account]) {
+            _hasRole[role][account] = true;
+            emit CCS_RoleGranted(role, account, msg.sender);
+        }
+    }
+
+    function _revokeRole(bytes32 role, address account) internal {
+        if (_hasRole[role][account]) {
+            _hasRole[role][account] = false;
+            emit CCS_RoleRevoked(role, account, msg.sender);
+        }
+    }
+
+    // =============================================================
+    //                             ADMIN
+    // =============================================================
+
+    function setPaused(bool value) external onlyRole(ROLE_PAUSER) {
+        paused = value;
+        emit CCS_PausedSet(value, uint64(block.timestamp));
+    }
