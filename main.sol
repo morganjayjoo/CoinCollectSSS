@@ -486,3 +486,64 @@ contract CoinCollectSSS {
         if (!s.active) revert CCS_SeasonInactive();
         if (uint64(block.timestamp) < s.startAt || uint64(block.timestamp) > s.endAt) revert CCS_SeasonInactive();
 
+        // optional operator tip per claim (paid into pot)
+        uint256 expectedTip = operatorTipWei * n;
+        if (msg.value != expectedTip) revert CCS_FeeMismatch();
+        if (expectedTip != 0) {
+            s.potWei += expectedTip;
+            emit CCS_Entry(msg.sender, sid, expectedTip, uint64(block.timestamp));
+        }
+
+        for (uint256 i = 0; i < n; i++) {
+            DropClaim calldata c = claims[i];
+            if (c.seasonId != sid) revert CCS_BadInput();
+            _claimOne(msg.sender, c);
+        }
+    }
+
+    function _claimOne(address player, DropClaim calldata c) internal {
+        if (c.coinType > maxCoinTypeId) revert CCS_BadInput();
+        if (c.amount == 0) revert CCS_BadInput();
+        if (c.deadline < uint64(block.timestamp)) revert CCS_Expired();
+        if (c.dropId == bytes32(0)) revert CCS_BadInput();
+
+        if (nonceUsed[player][c.nonce]) revert CCS_NonceUsed();
+        nonceUsed[player][c.nonce] = true;
+
+        if (dropIdUsed[c.seasonId][c.dropId]) revert CCS_NonceUsed();
+        dropIdUsed[c.seasonId][c.dropId] = true;
+
+        bytes32 digest = _hashDrop(player, c);
+        address recovered = _recover(digest, c.signature);
+        if (recovered != dropSigner) revert CCS_SignatureInvalid();
+
+        // streak update + bonus
+        (uint16 newStreak, uint256 streakBonus) = _updateStreak(c.seasonId, player);
+
+        // apply
+        uint96 prev = _coinBal[c.seasonId][player][c.coinType];
+        uint96 next = _safeAdd96(prev, c.amount);
+        _coinBal[c.seasonId][player][c.coinType] = next;
+
+        uint256 baseScore = uint256(c.amount);
+        uint256 addScore = baseScore + streakBonus;
+        scoreOf[c.seasonId][player] += addScore;
+
+        emit CCS_CoinDropClaimed(player, c.seasonId, c.coinType, c.amount, uint64(block.timestamp), c.dropId);
+        if (newStreak != 0) {
+            emit CCS_StreakUpdated(player, c.seasonId, newStreak, uint64(block.timestamp));
+        }
+    }
+
+    function _updateStreak(uint32 seasonId, address player) internal returns (uint16 newStreak, uint256 bonus) {
+        uint64 lastAt = lastClaimAtOf[seasonId][player];
+        uint64 nowAt = uint64(block.timestamp);
+
+        if (lastAt == 0 || nowAt > lastAt + uint64(streakWindowSeconds)) {
+            newStreak = 1;
+        } else {
+            uint16 prev = streakOf[seasonId][player];
+            unchecked {
+                newStreak = prev + 1;
+            }
+        }
