@@ -303,3 +303,64 @@ contract CoinCollectSSS {
         paused = value;
         emit CCS_PausedSet(value, uint64(block.timestamp));
     }
+
+    function rotateSigner(address newSigner) external onlyRole(ROLE_ADMIN) {
+        if (newSigner == address(0)) revert CCS_BadInput();
+        address old = dropSigner;
+        dropSigner = newSigner;
+        emit CCS_SignerRotated(newSigner, old, uint64(block.timestamp));
+    }
+
+    function setMaxCoinTypeId(uint16 value) external onlyRole(ROLE_ADMIN) {
+        if (value < 4) revert CCS_BadInput();
+        maxCoinTypeId = value;
+        emit CCS_SettingsUpdated(keccak256("maxCoinTypeId"), value, uint64(block.timestamp));
+    }
+
+    function setMaxDropsPerTx(uint256 value) external onlyRole(ROLE_ADMIN) {
+        if (value == 0 || value > 120) revert CCS_BadInput();
+        maxDropsPerTx = value;
+        emit CCS_SettingsUpdated(keccak256("maxDropsPerTx"), value, uint64(block.timestamp));
+    }
+
+    function setCraftFeeBps(uint256 value) external onlyRole(ROLE_ADMIN) {
+        if (value > 1_200) revert CCS_BadInput(); // <= 12%
+        craftFeeBps = value;
+        emit CCS_SettingsUpdated(keccak256("craftFeeBps"), value, uint64(block.timestamp));
+    }
+
+    function setStreakWindowSeconds(uint256 value) external onlyRole(ROLE_ADMIN) {
+        if (value < 3 hours || value > 120 hours) revert CCS_BadInput();
+        streakWindowSeconds = value;
+        emit CCS_SettingsUpdated(keccak256("streakWindowSeconds"), value, uint64(block.timestamp));
+    }
+
+    function setStreakBonus(uint256 perStep, uint256 cap) external onlyRole(ROLE_ADMIN) {
+        if (perStep > 200 || cap > 2_000) revert CCS_BadInput();
+        streakBonusPerStep = perStep;
+        maxStreakBonus = cap;
+        emit CCS_SettingsUpdated(keccak256("streakBonusPerStep"), perStep, uint64(block.timestamp));
+        emit CCS_SettingsUpdated(keccak256("maxStreakBonus"), cap, uint64(block.timestamp));
+    }
+
+    function setOperatorTipWei(uint256 value) external onlyRole(ROLE_ADMIN) {
+        if (value > 0.01 ether) revert CCS_BadInput();
+        operatorTipWei = value;
+        emit CCS_SettingsUpdated(keccak256("operatorTipWei"), value, uint64(block.timestamp));
+    }
+
+    function anchorMeta(bytes32 tag, bytes32 payloadHash) external onlyRole(ROLE_OPERATOR) {
+        if (tag == bytes32(0) || payloadHash == bytes32(0)) revert CCS_BadInput();
+        anchoredTag[tag] = true;
+        emit CCS_MetaAnchored(tag, payloadHash, uint64(block.timestamp));
+    }
+
+    // =============================================================
+    //                           PLAYER FLOW
+    // =============================================================
+
+    function register(bytes32 handleHash) external whenNotPaused {
+        if (handleHash == bytes32(0)) revert CCS_BadInput();
+        PlayerProfile storage p = playerOf[msg.sender];
+        if (p.registeredAt != 0) revert CCS_AlreadyRegistered();
+        p.handleHash = handleHash;
