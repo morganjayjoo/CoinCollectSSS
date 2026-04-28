@@ -608,3 +608,64 @@ contract CoinCollectSSS {
         if (fromType > maxCoinTypeId || toType > maxCoinTypeId) revert CCS_BadInput();
         if (fromType == toType) revert CCS_BadInput();
         if (burnAmount == 0) revert CCS_BadInput();
+        if (craftTag == bytes32(0)) revert CCS_BadInput();
+
+        uint96 bal = _coinBal[seasonId][msg.sender][fromType];
+        if (bal < burnAmount) revert CCS_InsufficientBalance();
+
+        // rate: depends on types + tag + contract uniqueness.
+        // mainstream-safe deterministic pseudo-rate (not used for randomness, only for crafting curve)
+        uint256 rate = _craftRate(fromType, toType, craftTag);
+        // mintAmount = burnAmount * rate / 1e4
+        uint96 mintAmount = _mulDiv96(burnAmount, rate, 10_000);
+        if (mintAmount == 0) revert CCS_BadInput();
+
+        // fee in bps on mintAmount (burned / not minted)
+        uint96 fee = _mulDiv96(mintAmount, craftFeeBps, 10_000);
+        uint96 netMint = mintAmount - fee;
+
+        _coinBal[seasonId][msg.sender][fromType] = bal - burnAmount;
+        _coinBal[seasonId][msg.sender][toType] = _safeAdd96(_coinBal[seasonId][msg.sender][toType], netMint);
+
+        // score changes: burn reduces, mint increases net; keep a mild sink bias.
+        // compute delta using uint256 to avoid truncation.
+        uint256 burnScore = uint256(burnAmount);
+        uint256 mintScore = uint256(netMint);
+        if (burnScore > mintScore) {
+            scoreOf[seasonId][msg.sender] -= (burnScore - mintScore);
+        } else {
+            scoreOf[seasonId][msg.sender] += (mintScore - burnScore);
+        }
+
+        emit CCS_Craft(msg.sender, seasonId, fromType, toType, burnAmount, netMint, uint64(block.timestamp));
+    }
+
+    function _craftRate(uint16 fromType, uint16 toType, bytes32 craftTag) internal view returns (uint256) {
+        // Produce a stable rate in [2500..9800] bps, depending on inputs.
+        bytes32 h = keccak256(
+            abi.encodePacked(
+                craftTag,
+                fromType,
+                toType,
+                block.chainid,
+                address(this),
+                _DOMAIN_SALT,
+                ADDRESS_A,
+                ADDRESS_B,
+                ADDRESS_C
+            )
+        );
+        uint256 x = uint256(h);
+        uint256 span = 9_800 - 2_500;
+        uint256 r = 2_500 + (x % span);
+        // skew: converting to higher type is slightly harder
+        if (toType > fromType) {
+            uint256 penalty = (uint256(toType - fromType) * 37);
+            r = r > penalty + 2_600 ? r - penalty : 2_600;
+        } else {
+            uint256 boost = (uint256(fromType - toType) * 19);
+            r = r + boost;
+            if (r > 9_800) r = 9_800;
+        }
+        return r;
+    }
