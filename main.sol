@@ -120,3 +120,64 @@ contract CoinCollectSSS {
     // =============================================================
     //                          REENTRANCY
     // =============================================================
+
+    uint256 private _locked = 1;
+
+    modifier nonReentrant() {
+        if (_locked != 1) revert CCS_Reentrancy();
+        _locked = 2;
+        _;
+        _locked = 1;
+    }
+
+    // =============================================================
+    //                             PAUSE
+    // =============================================================
+
+    bool public paused;
+
+    modifier whenNotPaused() {
+        if (paused) revert CCS_Paused();
+        _;
+    }
+
+    // =============================================================
+    //                            STORAGE
+    // =============================================================
+
+    struct PlayerProfile {
+        // handleHash is a 32-byte identifier (e.g., keccak256 of a handle string).
+        bytes32 handleHash;
+        uint64 registeredAt;
+        uint32 lastSeasonPlayed;
+        uint16 flags; // reserved, future-proofing
+    }
+
+    struct Season {
+        uint64 startAt;
+        uint64 endAt;
+        uint64 finalizedAt;
+        uint256 entryFeeWei;
+        uint256 potWei;
+        bytes32 resultTag;
+        bool active;
+        bool finalized;
+    }
+
+    // Coin types are arbitrary game categories. Default max coin type id set by admin.
+    // Balances are non-transferable; they represent in-game points by season & type.
+    uint16 public maxCoinTypeId;
+
+    // Prize weights / configuration values (all in simple ints for readability).
+    uint256 public maxDropsPerTx;
+    uint256 public craftFeeBps;
+    uint256 public streakWindowSeconds;
+    uint256 public streakBonusPerStep; // points added as bonus per streak step
+    uint256 public maxStreakBonus; // cap to prevent runaway
+    uint256 public operatorTipWei; // optional tip per claim, paid into pot
+
+    // Role mapping
+    mapping(bytes32 => mapping(address => bool)) private _hasRole;
+
+    // Player registry
+    mapping(address => PlayerProfile) public playerOf;
