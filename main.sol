@@ -364,3 +364,64 @@ contract CoinCollectSSS {
         PlayerProfile storage p = playerOf[msg.sender];
         if (p.registeredAt != 0) revert CCS_AlreadyRegistered();
         p.handleHash = handleHash;
+        p.registeredAt = uint64(block.timestamp);
+        emit CCS_PlayerRegistered(msg.sender, handleHash, p.registeredAt);
+    }
+
+    function isRegistered(address player) public view returns (bool) {
+        return playerOf[player].registeredAt != 0;
+    }
+
+    // =============================================================
+    //                          SEASON CONTROL
+    // =============================================================
+
+    function openSeason(uint64 startAt, uint64 endAt, uint256 entryFeeWei) external onlyRole(ROLE_ADMIN) {
+        if (paused) revert CCS_Paused();
+        if (endAt <= startAt) revert CCS_BadInput();
+        if (endAt <= uint64(block.timestamp)) revert CCS_BadInput();
+        uint32 newId = currentSeasonId + 1;
+
+        Season storage cur = seasonOf[currentSeasonId];
+        if (cur.active && !cur.finalized) revert CCS_SeasonAlreadyActive();
+
+        Season storage s = seasonOf[newId];
+        if (s.startAt != 0) revert CCS_BadInput();
+
+        s.startAt = startAt;
+        s.endAt = endAt;
+        s.entryFeeWei = entryFeeWei;
+        s.active = true;
+        currentSeasonId = newId;
+
+        emit CCS_SeasonOpened(newId, startAt, endAt, entryFeeWei);
+    }
+
+    function finalizeSeason(uint32 seasonId, bytes32 resultTag) external onlyRole(ROLE_OPERATOR) {
+        Season storage s = seasonOf[seasonId];
+        if (!s.active) revert CCS_SeasonInactive();
+        if (s.finalized) revert CCS_SeasonAlreadyFinal();
+        if (uint64(block.timestamp) < s.endAt) revert CCS_BadInput();
+        s.finalized = true;
+        s.finalizedAt = uint64(block.timestamp);
+        s.resultTag = resultTag;
+        s.active = false;
+
+        emit CCS_SeasonFinalized(seasonId, s.finalizedAt, s.potWei, resultTag);
+    }
+
+    function seasonStatus(uint32 seasonId)
+        external
+        view
+        returns (
+            bool active,
+            bool finalized,
+            uint64 startAt,
+            uint64 endAt,
+            uint64 finalizedAt,
+            uint256 entryFeeWei,
+            uint256 potWei,
+            bytes32 resultTag
+        )
+    {
+        Season memory s = seasonOf[seasonId];
