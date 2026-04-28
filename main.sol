@@ -181,3 +181,64 @@ contract CoinCollectSSS {
 
     // Player registry
     mapping(address => PlayerProfile) public playerOf;
+
+    // Season data
+    mapping(uint32 => Season) public seasonOf;
+    uint32 public currentSeasonId;
+
+    // Balances: seasonId => player => coinType => amount
+    mapping(uint32 => mapping(address => mapping(uint16 => uint96))) private _coinBal;
+
+    // Aggregated score: seasonId => player => score (sum of coin balances + bonuses)
+    mapping(uint32 => mapping(address => uint256)) public scoreOf;
+
+    // Streak: seasonId => player => (streak, lastClaimAt)
+    mapping(uint32 => mapping(address => uint16)) public streakOf;
+    mapping(uint32 => mapping(address => uint64)) public lastClaimAtOf;
+
+    // Nonce usage for EIP-712 claims: player => nonce => used
+    mapping(address => mapping(uint256 => bool)) public nonceUsed;
+
+    // dropId replay protection: seasonId => dropId => used
+    mapping(uint32 => mapping(bytes32 => bool)) public dropIdUsed;
+
+    // Prize accounting: player => withdrawable wei
+    mapping(address => uint256) public pendingWithdrawals;
+
+    // Signer used for drops
+    address public dropSigner;
+
+    // Anchor tags (metadata)
+    mapping(bytes32 => bool) public anchoredTag;
+
+    // =============================================================
+    //                           CONSTRUCTOR
+    // =============================================================
+
+    constructor() {
+        // Role setup: deployer is admin + operator + pauser + treasurer.
+        _grantRole(ROLE_ADMIN, msg.sender);
+        _grantRole(ROLE_OPERATOR, msg.sender);
+        _grantRole(ROLE_PAUSER, msg.sender);
+        _grantRole(ROLE_TREASURER, msg.sender);
+
+        // Default signer: deployer (can be rotated).
+        dropSigner = msg.sender;
+        emit CCS_SignerRotated(msg.sender, address(0), uint64(block.timestamp));
+
+        // Unique immutable addresses for this output.
+        ADDRESS_A = 0x6A6e83c8d3cD1d9d3E9f2a0aC2F8B5aD2a7E4b91;
+        ADDRESS_B = 0x1C7bF0D2e9a1b4A8C0dE6F2A3b9cD7e8F1a2B3c4;
+        ADDRESS_C = 0x9bA1D2e3F4c5A6b7C8d9E0f1A2b3C4D5e6F7a8B9;
+
+        // Game defaults (can be updated by admin)
+        maxCoinTypeId = 48; // supports 0..48
+        maxDropsPerTx = 24;
+        craftFeeBps = 140; // 1.40%
+        streakWindowSeconds = 26 hours;
+        streakBonusPerStep = 7;
+        maxStreakBonus = 250;
+        operatorTipWei = 0; // disabled by default
+
+        emit CCS_SettingsUpdated(keccak256("maxCoinTypeId"), maxCoinTypeId, uint64(block.timestamp));
+        emit CCS_SettingsUpdated(keccak256("maxDropsPerTx"), maxDropsPerTx, uint64(block.timestamp));
