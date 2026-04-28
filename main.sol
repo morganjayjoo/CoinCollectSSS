@@ -547,3 +547,64 @@ contract CoinCollectSSS {
                 newStreak = prev + 1;
             }
         }
+
+        streakOf[seasonId][player] = newStreak;
+        lastClaimAtOf[seasonId][player] = nowAt;
+
+        uint256 raw = uint256(newStreak) * streakBonusPerStep;
+        bonus = raw > maxStreakBonus ? maxStreakBonus : raw;
+    }
+
+    function _hashDrop(address player, DropClaim calldata c) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                _DROP_TYPEHASH,
+                player,
+                c.seasonId,
+                c.coinType,
+                c.amount,
+                c.deadline,
+                c.dropId,
+                c.nonce
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
+    }
+
+    function domainSeparator() external view returns (bytes32) {
+        return _domainSeparator();
+    }
+
+    function _domainSeparator() internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                _EIP712_DOMAIN_TYPEHASH,
+                keccak256(bytes(NAME)),
+                keccak256(bytes(VERSION)),
+                block.chainid,
+                address(this),
+                _DOMAIN_SALT
+            )
+        );
+    }
+
+    // =============================================================
+    //                             CRAFTING
+    // =============================================================
+    // Convert one coin type to another with a deterministic exchange.
+    // This is an in-game sink to reduce supply and add strategy.
+
+    function craft(
+        uint32 seasonId,
+        uint16 fromType,
+        uint16 toType,
+        uint96 burnAmount,
+        bytes32 craftTag
+    ) external whenNotPaused nonReentrant {
+        if (!isRegistered(msg.sender)) revert CCS_NotRegistered();
+        Season memory s = seasonOf[seasonId];
+        if (!s.active) revert CCS_SeasonInactive();
+        if (uint64(block.timestamp) < s.startAt || uint64(block.timestamp) > s.endAt) revert CCS_SeasonInactive();
+        if (fromType > maxCoinTypeId || toType > maxCoinTypeId) revert CCS_BadInput();
+        if (fromType == toType) revert CCS_BadInput();
+        if (burnAmount == 0) revert CCS_BadInput();
