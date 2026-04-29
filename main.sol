@@ -852,3 +852,64 @@ contract CoinCollectSSS {
         return uint96(q);
     }
 
+    // =============================================================
+    //                    EXTRA GAMEPLAY: "RUMBLE" BURN
+    // =============================================================
+    // A seasonal sink: burn a mix of types to mint a special type (maxCoinTypeId).
+    // This keeps on-chain operations compact while offering strategy.
+
+    event CCS_Rumble(address indexed player, uint32 indexed seasonId, uint96 burnedTotal, uint96 minted, uint64 at, bytes32 rumbleId);
+
+    function rumble(
+        uint32 seasonId,
+        uint16[] calldata typesIn,
+        uint96[] calldata amountsIn,
+        bytes32 rumbleId
+    ) external whenNotPaused nonReentrant {
+        if (!isRegistered(msg.sender)) revert CCS_NotRegistered();
+        Season memory s = seasonOf[seasonId];
+        if (!s.active) revert CCS_SeasonInactive();
+        if (uint64(block.timestamp) < s.startAt || uint64(block.timestamp) > s.endAt) revert CCS_SeasonInactive();
+        if (rumbleId == bytes32(0)) revert CCS_BadInput();
+        uint256 n = typesIn.length;
+        if (n == 0 || n != amountsIn.length || n > 24) revert CCS_TooMany();
+
+        uint96 burned;
+        for (uint256 i = 0; i < n; i++) {
+            uint16 t = typesIn[i];
+            uint96 a = amountsIn[i];
+            if (a == 0 || t > maxCoinTypeId) revert CCS_BadInput();
+            uint96 bal = _coinBal[seasonId][msg.sender][t];
+            if (bal < a) revert CCS_InsufficientBalance();
+            _coinBal[seasonId][msg.sender][t] = bal - a;
+            burned = _safeAdd96(burned, a);
+        }
+
+        // Mint special based on a curve: sqrt-ish using integer approximations
+        uint96 minted = _rumbleMint(burned, rumbleId, seasonId);
+        uint16 special = maxCoinTypeId;
+        _coinBal[seasonId][msg.sender][special] = _safeAdd96(_coinBal[seasonId][msg.sender][special], minted);
+
+        // Score: minted is added, burned is removed with a slight sink premium
+        uint256 burnScore = uint256(burned);
+        uint256 mintScore = uint256(minted);
+        if (burnScore > mintScore) {
+            scoreOf[seasonId][msg.sender] -= (burnScore - mintScore);
+        } else {
+            scoreOf[seasonId][msg.sender] += (mintScore - burnScore);
+        }
+
+        emit CCS_Rumble(msg.sender, seasonId, burned, minted, uint64(block.timestamp), rumbleId);
+    }
+
+    function _rumbleMint(uint96 burned, bytes32 rumbleId, uint32 seasonId) internal view returns (uint96) {
+        // Create a deterministic factor in [8200..11200] bps, then apply a sqrt approximation.
+        bytes32 h = keccak256(abi.encodePacked(rumbleId, seasonId, burned, address(this), _DOMAIN_SALT, block.chainid));
+        uint256 f = 8_200 + (uint256(h) % 3_001); // 8200..11200
+        uint256 base = uint256(burned) * f / 10_000;
+        uint256 root = _isqrt(base);
+        if (root > type(uint96).max) revert CCS_BadInput();
+        return uint96(root);
+    }
+
+    function _isqrt(uint256 x) internal pure returns (uint256) {
