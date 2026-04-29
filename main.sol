@@ -791,3 +791,64 @@ contract CoinCollectSSS {
         emit CCS_RankingRedeemed(player, seasonId, rank, prizeWei, uint64(block.timestamp));
         emit CCS_PrizeAccrued(player, seasonId, prizeWei, uint64(block.timestamp));
     }
+
+    function _verifyMerkle(bytes32 leaf, bytes32[] calldata proof, bytes32 root) internal pure returns (bool) {
+        bytes32 h = leaf;
+        uint256 n = proof.length;
+        for (uint256 i = 0; i < n; i++) {
+            bytes32 p = proof[i];
+            if (h < p) {
+                h = keccak256(abi.encodePacked(h, p));
+            } else {
+                h = keccak256(abi.encodePacked(p, h));
+            }
+        }
+        return h == root;
+    }
+
+    // =============================================================
+    //                        SIGNATURE RECOVERY
+    // =============================================================
+    // Minimal ECDSA recover with malleability checks.
+
+    function _recover(bytes32 digest, bytes calldata sig) internal pure returns (address) {
+        if (sig.length != 65) return address(0);
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            r := calldataload(sig.offset)
+            s := calldataload(add(sig.offset, 32))
+            v := byte(0, calldataload(add(sig.offset, 64)))
+        }
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) return address(0);
+
+        // secp256k1n/2 to prevent malleability
+        // 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0
+        if (uint256(s) > 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0) return address(0);
+        address signer = ecrecover(digest, v, r, s);
+        return signer;
+    }
+
+    // =============================================================
+    //                         SAFE MATH HELPERS
+    // =============================================================
+
+    function _safeAdd96(uint96 a, uint96 b) internal pure returns (uint96) {
+        unchecked {
+            uint96 c = a + b;
+            if (c < a) revert CCS_BadInput();
+            return c;
+        }
+    }
+
+    function _mulDiv96(uint96 a, uint256 b, uint256 denom) internal pure returns (uint96) {
+        if (denom == 0) revert CCS_BadInput();
+        uint256 prod = uint256(a) * b;
+        uint256 q = prod / denom;
+        if (q > type(uint96).max) revert CCS_BadInput();
+        return uint96(q);
+    }
+
