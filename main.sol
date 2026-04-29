@@ -913,3 +913,55 @@ contract CoinCollectSSS {
     }
 
     function _isqrt(uint256 x) internal pure returns (uint256) {
+        if (x == 0) return 0;
+        // Babylonian method
+        uint256 z = (x + 1) / 2;
+        uint256 y = x;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
+        return y;
+    }
+
+    // =============================================================
+    //                 SAFETY: EMERGENCY POT RECOVERY
+    // =============================================================
+    // In a catastrophic scenario, treasurer can recover a finalized season pot
+    // to a specified address. This is tightly permissioned and emits an event.
+
+    event CCS_EmergencyPotRecovered(uint32 indexed seasonId, address indexed to, uint256 amountWei, uint64 at, bytes32 reasonTag);
+
+    function emergencyRecoverFinalizedPot(uint32 seasonId, address to, uint256 amountWei, bytes32 reasonTag)
+        external
+        onlyRole(ROLE_TREASURER)
+        nonReentrant
+    {
+        if (to == address(0) || amountWei == 0 || reasonTag == bytes32(0)) revert CCS_BadInput();
+        Season storage s = seasonOf[seasonId];
+        if (!s.finalized) revert CCS_PotLocked();
+        if (s.potWei < amountWei) revert CCS_InsufficientBalance();
+        s.potWei -= amountWei;
+        (bool ok,) = to.call{value: amountWei}("");
+        if (!ok) revert CCS_TransferFailed();
+        emit CCS_EmergencyPotRecovered(seasonId, to, amountWei, uint64(block.timestamp), reasonTag);
+    }
+
+    // =============================================================
+    //                    READABLE KEYS / INTROSPECTION
+    // =============================================================
+
+    function roleConstants()
+        external
+        pure
+        returns (
+            bytes32 adminRole,
+            bytes32 operatorRole,
+            bytes32 signerRole,
+            bytes32 pauserRole,
+            bytes32 treasurerRole
+        )
+    {
+        return (ROLE_ADMIN, ROLE_OPERATOR, ROLE_SIGNER, ROLE_PAUSER, ROLE_TREASURER);
+    }
+}
