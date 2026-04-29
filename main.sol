@@ -730,3 +730,64 @@ contract CoinCollectSSS {
     }
 
     // =============================================================
+    //                  OPTIONAL: OPERATOR SCORE SNAPSHOTS
+    // =============================================================
+    // For large seasons, on-chain sorting is avoided. Operator can publish a Merkle root
+    // of rankings offchain (for proofs). This contract verifies proofs to redeem prizes.
+
+    bytes32 public rankingRoot;
+    uint32 public rankingSeasonId;
+    uint64 public rankingPublishedAt;
+    bool public rankingFinal;
+
+    event CCS_RankingPublished(uint32 indexed seasonId, bytes32 indexed root, uint64 at);
+    event CCS_RankingFinalized(uint32 indexed seasonId, bytes32 indexed root, uint64 at);
+    event CCS_RankingRedeemed(address indexed player, uint32 indexed seasonId, uint32 rank, uint256 prizeWei, uint64 at);
+
+    mapping(uint32 => mapping(address => bool)) public redeemedRankingPrize;
+
+    function publishRankingRoot(uint32 seasonId, bytes32 root) external onlyRole(ROLE_OPERATOR) {
+        Season memory s = seasonOf[seasonId];
+        if (!s.finalized) revert CCS_PotLocked();
+        if (root == bytes32(0)) revert CCS_BadInput();
+        rankingRoot = root;
+        rankingSeasonId = seasonId;
+        rankingPublishedAt = uint64(block.timestamp);
+        rankingFinal = false;
+        emit CCS_RankingPublished(seasonId, root, rankingPublishedAt);
+    }
+
+    function finalizeRankingRoot() external onlyRole(ROLE_OPERATOR) {
+        if (rankingRoot == bytes32(0) || rankingSeasonId == 0) revert CCS_RankNotReady();
+        rankingFinal = true;
+        emit CCS_RankingFinalized(rankingSeasonId, rankingRoot, uint64(block.timestamp));
+    }
+
+    /// @notice Redeem a prize based on a Merkle proof leaf:
+    /// leaf = keccak256(abi.encodePacked(player, seasonId, rank, prizeWei, score))
+    function redeemRankingPrize(
+        address player,
+        uint32 seasonId,
+        uint32 rank,
+        uint256 prizeWei,
+        uint256 score,
+        bytes32[] calldata proof
+    ) external nonReentrant {
+        if (player == address(0)) revert CCS_BadInput();
+        if (!rankingFinal) revert CCS_RankNotReady();
+        if (seasonId != rankingSeasonId) revert CCS_BadInput();
+        if (redeemedRankingPrize[seasonId][player]) revert CCS_NonceUsed();
+
+        bytes32 leaf = keccak256(abi.encodePacked(player, seasonId, rank, prizeWei, score));
+        if (!_verifyMerkle(leaf, proof, rankingRoot)) revert CCS_ProofInvalid();
+
+        redeemedRankingPrize[seasonId][player] = true;
+
+        Season storage s = seasonOf[seasonId];
+        if (s.potWei < prizeWei) revert CCS_InsufficientBalance();
+        s.potWei -= prizeWei;
+        pendingWithdrawals[player] += prizeWei;
+
+        emit CCS_RankingRedeemed(player, seasonId, rank, prizeWei, uint64(block.timestamp));
+        emit CCS_PrizeAccrued(player, seasonId, prizeWei, uint64(block.timestamp));
+    }
